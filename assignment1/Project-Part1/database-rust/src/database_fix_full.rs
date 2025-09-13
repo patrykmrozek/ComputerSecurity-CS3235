@@ -311,7 +311,13 @@ fn main() {
             update_username(&mut db, "Mallory", &long_username);
         }
         PayloadType::USE_AFTER_FREE_PAYLOAD => {
-            println!("1");
+            for i in 0..INACTIVITY_THRESHOLD + 2 {
+                println!("----------------------Day {}: User login and database update-----------------------\n", i + 1);
+                user_login(&mut db, "Alice");
+                user_login(&mut db, "Bob");
+                update_database_daily(&mut db);
+                println!();
+            }
         }
         PayloadType::DOUBLE_FREE_PAYLOAD => {
             println!("2");
