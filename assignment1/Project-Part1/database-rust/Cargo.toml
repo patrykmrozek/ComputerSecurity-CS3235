@@ -1,0 +1,8 @@
+[package]
+name = "database-rust"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name  = "database_fix_full"
+path = "src/database_fix_full.rs"
