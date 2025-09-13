@@ -1,4 +1,12 @@
+use std::env;
 use std::ptr::{copy, null};
+
+#[derive(Debug)]
+enum PayloadType {
+    OUT_OF_BOUNDS_PAYLOAD,
+    DOUBLE_FREE_PAYLOAD,
+    USE_AFTER_FREE_PAYLOAD,
+}
 
 //====================================Dont change these definitions==========================
 const MAX_USERS: usize = 100;
@@ -57,17 +65,20 @@ fn add_user(db: &mut UserDatabase, mut user: Box<UserStruct>) {
 
 fn print_database(db: &UserDatabase) {
     for user in &(*db).users {
-        println!("{:?}", Some(user));
+        if let Some(_user) = user {
+            print_user(_user);
+        }
     }
 }
 
 fn copy_string(dest: &mut [u8], src: &str, n: usize) {
     //gets the minimum between src.len and n, so we dont go over the range
-    for i in 0..src.len().min(n) {
+    let copy_len = src.len().min(n);
+    for i in 0..copy_len {
         dest[i] = src.as_bytes()[i];
     }
-    if src.len().min(n) < dest.len() {
-        dest[n] = 0;
+    if copy_len < dest.len() {
+        dest[copy_len] = 0;
     }
 }
 
@@ -109,7 +120,11 @@ fn find_user_by_id(db: &UserDatabase, user_id: i32) -> Option<Box<UserStruct>> {
     return None;
 }
 
-//fn cleanup_db(db: &mut UserDatabase) {}
+/*
+fn cleanup_db(db: &mut UserDatabase) {
+    drop(db);
+}
+*/
 
 fn update_database_daily(db: &mut UserDatabase) {
     for i in 0..(*db).count as usize {
@@ -129,7 +144,7 @@ fn update_username(db: &mut UserDatabase, username: &str, new_username: &str) {
     let user: Option<&mut Box<UserStruct>> = find_user_by_username_mut(db, username);
     if let Some(_user) = user {
         //println!("OLD USERNAME: {:?}", _user.username);
-        copy_string(&mut _user.username, new_username, new_username.len());
+        copy_string(&mut _user.username, new_username, MAX_NAME_LEN - 1);
         //println!("NEW USERNAME: {:?}", _user.username);
     }
 }
@@ -151,36 +166,35 @@ fn get_nullt_index_from_u8(bytes: &[u8]) -> usize {
 }
 
 //from u8 to string, excluding null terminator
-fn u8_to_string_no_nullt(bytes: &[u8]) -> Option<String> {
+fn u8_to_string_no_nullt(bytes: &[u8]) -> String {
     let null_idx: usize = get_nullt_index_from_u8(bytes);
-    return Some(String::from_utf8_lossy(&bytes[0..null_idx]).to_string());
+    return String::from_utf8_lossy(&bytes[0..null_idx]).to_string();
 }
 
 //'a - lifetime specifier: specifies which parameter eth reference of the return is to
 fn get_password(db: &UserDatabase, username: &str) -> Option<String> {
-    let user = find_user_by_username_ref(db, username)?;
-    return u8_to_string_no_nullt(&user.password);
+    let user = find_user_by_username(db, username)?;
+    return Some(u8_to_string_no_nullt(&user.password));
 }
 
-fn update_password(db: &mut UserDatabase, username: &str, password: &str) {
-    let user: Option<&mut Box<UserStruct>> = find_user_by_username_mut(db, username);
-    if let Some(_user) = user {
+fn update_password(user: &mut Option<Box<UserStruct>>, password: &str) {
+    if let Some(ref mut _user) = user {
         copy_string(&mut _user.password, password, password.len());
     }
 }
 
-fn print_user(user: Box<UserStruct>) {
+fn print_user(user: &Box<UserStruct>) {
+    let username = u8_to_string_no_nullt(&user.username);
+    let email = u8_to_string_no_nullt(&user.email);
+    let password = u8_to_string_no_nullt(&user.password);
     println!(
-        "User{:?} {:?}: Email: {:?}, Inactivity: {:?}, Password: {:?}\n",
-        user.user_id, user.username, user.email, user.inactivity_count, user.password
+        "User {:?}: {:?} Email: {:?}, Inactivity: {:?}, Password: {:?}\n",
+        user.user_id, username, email, user.inactivity_count, password
     );
 }
 
 //returns an immutable reference to the UserStruct Option
-fn find_user_by_username_ref<'a>(
-    db: &'a UserDatabase,
-    username: &str,
-) -> Option<&'a Box<UserStruct>> {
+fn find_user_by_username<'a>(db: &'a UserDatabase, username: &str) -> Option<&'a Box<UserStruct>> {
     for user in &(*db).users {
         if let Some(_user) = user {
             //println!("USERNAME: {:?} VS TARGET: {:?}", username.as_bytes(), _user.username);
@@ -217,7 +231,7 @@ fn find_user_by_username_mut<'a>(
 }
 
 /*
-fn find_user_by_username_ref(db: &UserDatabase, username: &str) -> Option<Box<UserStruct>> {
+fn find_user_by_username(db: &UserDatabase, username: &str) -> Option<Box<UserStruct>> {
     for user in &(*db).users {
         if let Some(ref _user) = user {
             //println!("USERNAME: {:?} VS TARGET: {:?}", username.as_bytes(), _user.username);
@@ -244,6 +258,71 @@ for i in 0..(*db).count as usize {
 */
 
 fn main() {
+    let args: Vec<String> = env::args().collect(); //arguments from command line
+
+    if args.len() > 2 {
+        println!("Usage: {:?} <payload_type>", args[0]);
+        println!("OUT_OF_BOUNDS_PAYLOAD");
+        println!("DOUBLE_FREE_PAYLOAD");
+        println!("USE_AFTER_FREE_PAYLOAD");
+        return;
+    }
+
+    let payload_num = match args[1].parse::<i32>() {
+        //returns Result<T, error>
+        Ok(num) => num, //if it succeeds, store it in num
+        Err(_) => {
+            println!("Invalid payload type: {}", args[1]);
+            return;
+        }
+    };
+
+    let payload_type = match payload_num {
+        0 => PayloadType::OUT_OF_BOUNDS_PAYLOAD,
+        1 => PayloadType::USE_AFTER_FREE_PAYLOAD,
+        2 => PayloadType::DOUBLE_FREE_PAYLOAD,
+        _ => {
+            println!("Invalid payload num");
+            return;
+        }
+    };
+
+    let payload_name = match payload_type {
+        PayloadType::OUT_OF_BOUNDS_PAYLOAD => "OUT_OF_BOUNDS_PAYLOAD",
+        PayloadType::USE_AFTER_FREE_PAYLOAD => "USE_AFTER_FREE_PAYLOAD",
+        PayloadType::DOUBLE_FREE_PAYLOAD => "DOUBLE_FREE_PAYLOAD",
+    };
+
+    println!("Running test payload {:?}", payload_name);
+
+    let mut db = init_database();
+    let mallory = create_user("Mallory", "mallory@nus.edu.sg", 0, "malloryisnotevil");
+    add_user(&mut db, mallory);
+    let alice = create_user("Alice", "alice@nus.edu.sg", 1, "aliceinthewonderland");
+    add_user(&mut db, alice);
+    let bob = create_user("Bob", "bob@nus.edu.sg", 2, "bobthebuilder");
+    add_user(&mut db, bob);
+    let eve = create_user("Eve", "eve@nus.edu.sg", 3, "eve4ever");
+    add_user(&mut db, eve);
+
+    match payload_type {
+        PayloadType::OUT_OF_BOUNDS_PAYLOAD => {
+            let long_username = "C".repeat(99); //string with 99 Cs
+            update_username(&mut db, "Mallory", &long_username);
+        }
+        PayloadType::USE_AFTER_FREE_PAYLOAD => {
+            println!("1");
+        }
+        PayloadType::DOUBLE_FREE_PAYLOAD => {
+            println!("2");
+        }
+    };
+
+    println!("==============================Final Database State:===========================================\n");
+    print_database(&db);
+    println!("==============================================================================================\n");
+
+    println!("If this program didn't crash, were you lucky ? Check the logs\n");
 
     /*
     println!("Hello, world!"); // Placeholder main function
@@ -274,7 +353,7 @@ fn main() {
     let some_user = find_user_by_id(&user_db, 0);
     println!("AFTER DB UPDATE: {:?}", some_user);
 
-    let found_user = find_user_by_username_ref(&user_db, "Jim");
+    let found_user = find_user_by_username(&user_db, "Jim");
     println!("FOUND USER: {:?}", found_user);
 
     update_username(&mut user_db, "Jim", "Jimmy");
