@@ -53,7 +53,7 @@ fn init_database() -> UserDatabase {
 //&mut: can modify the value it points to
 //mut: can modify the parameter
 fn add_user(db: &mut UserDatabase, mut user: Box<UserStruct>) {
-    (*user).user_id = (*db).count;
+    (*user).user_id = (*db).count + 1;
     //indexing arrays in rust always requires usize indeces
     let index: usize = (*db).count as usize;
     (*db).users[index] = Some(user);
@@ -127,17 +127,24 @@ fn cleanup_db(db: &mut UserDatabase) {
 */
 
 fn update_database_daily(db: &mut UserDatabase) {
+    let mut users_removed = 0;
     for i in 0..(*db).count as usize {
         //copy user at index i to _user if it it not None (borrow)
         //ref: creates a reference - primarily used in pattern matching, &mut used everuwhere else pretty much
         if let Some(ref mut _user) = (*db).users[i] {
+            //println!("USER IN UPDATEDB:");
+            //print_user(_user);
             if _user.inactivity_count > INACTIVITY_THRESHOLD {
+                println!("INNACTIVE USER: ");
+                print_user(_user);
                 (*db).users[i] = None;
+                users_removed += 1;
             } else {
                 (*_user).inactivity_count += 1;
             }
         }
     }
+    (*db).count -= users_removed;
 }
 
 fn update_username(db: &mut UserDatabase, username: &str, new_username: &str) {
@@ -171,15 +178,17 @@ fn u8_to_string_no_nullt(bytes: &[u8]) -> String {
     return String::from_utf8_lossy(&bytes[0..null_idx]).to_string();
 }
 
-//'a - lifetime specifier: specifies which parameter eth reference of the return is to
 fn get_password(db: &UserDatabase, username: &str) -> Option<String> {
     let user = find_user_by_username(db, username)?;
     return Some(u8_to_string_no_nullt(&user.password));
 }
 
-fn update_password(user: &mut Option<Box<UserStruct>>, password: &str) {
+fn update_password(db: &mut UserDatabase, username: &str, password: &str) {
+    let mut user: Option<&mut Box<UserStruct>> = find_user_by_username_mut(db, username);
     if let Some(ref mut _user) = user {
+        println!("OLD PASSWORD: {:?}", u8_to_string_no_nullt(&_user.password));
         copy_string(&mut _user.password, password, password.len());
+        println!("NEW PASSWORD: {:?}", u8_to_string_no_nullt(&_user.password));
     }
 }
 
@@ -188,12 +197,13 @@ fn print_user(user: &Box<UserStruct>) {
     let email = u8_to_string_no_nullt(&user.email);
     let password = u8_to_string_no_nullt(&user.password);
     println!(
-        "User {:?}: {:?} Email: {:?}, Inactivity: {:?}, Password: {:?}\n",
-        user.user_id, username, email, user.inactivity_count, password
+        "User: {:?} ID: {:?}, Email: {:?}, Inactivity: {:?}, Password: {:?}",
+        username, user.user_id, email, user.inactivity_count, password
     );
 }
 
 //returns an immutable reference to the UserStruct Option
+//'a - lifetime specifier: specifies which parameter eth reference of the return is to
 fn find_user_by_username<'a>(db: &'a UserDatabase, username: &str) -> Option<&'a Box<UserStruct>> {
     for user in &(*db).users {
         if let Some(_user) = user {
@@ -296,8 +306,8 @@ fn main() {
     println!("Running test payload {:?}", payload_name);
 
     let mut db = init_database();
-    let mallory = create_user("Mallory", "mallory@nus.edu.sg", 0, "malloryisnotevil");
-    add_user(&mut db, mallory);
+    let mut mallory = create_user("Mallory", "mallory@nus.edu.sg", 0, "malloryisnotevil");
+    add_user(&mut db, mallory.clone());
     let alice = create_user("Alice", "alice@nus.edu.sg", 1, "aliceinthewonderland");
     add_user(&mut db, alice);
     let bob = create_user("Bob", "bob@nus.edu.sg", 2, "bobthebuilder");
@@ -312,7 +322,7 @@ fn main() {
         }
         PayloadType::USE_AFTER_FREE_PAYLOAD => {
             for i in 0..INACTIVITY_THRESHOLD + 2 {
-                println!("----------------------Day {}: User login and database update-----------------------\n", i + 1);
+                println!("----------------------Day {}: User login and database update-----------------------", i + 1);
                 user_login(&mut db, "Alice");
                 user_login(&mut db, "Bob");
                 update_database_daily(&mut db);
@@ -320,13 +330,39 @@ fn main() {
             }
         }
         PayloadType::DOUBLE_FREE_PAYLOAD => {
-            println!("2");
+            println!("--------------Starting a sprint of the database update and user login-------------");
+            for _ in 0..INACTIVITY_THRESHOLD + 2 {
+                user_login(&mut db, "Alice");
+                user_login(&mut db, "Bob");
+                update_database_daily(&mut db);
+            }
+
+            println!("--------------Database update and user login sprint finished----------------------");
+            let charlie = create_user(
+                "Charlie",
+                "charlie@nus.edu.sg",
+                3,
+                "charlieandthechocolatefactory",
+            );
+            add_user(&mut db, charlie);
+            let bruce = create_user("Bruce", "bruce@nus.edu.sg", 4, "iambatman");
+            add_user(&mut db, bruce);
+            let joker = create_user("Joker", "joker@nus.edu.sg", 5, "whysoserious");
+            add_user(&mut db, joker);
+            println!("Mallory wants to login and update her password");
+            update_password(&mut db, "Mallory", "Malloryiswatchingyou");
+            println!("Eve wants to get her password => ");
+            let password = get_password(&db, "Eve");
+            println!("Eve's password is: {:?}", password);
+        }
+        _ => {
+            println!("Unknown payload type: Self destructing")
         }
     };
 
-    println!("==============================Final Database State:===========================================\n");
+    println!("==============================Final Database State:===========================================");
     print_database(&db);
-    println!("==============================================================================================\n");
+    println!("==============================================================================================");
 
     println!("If this program didn't crash, were you lucky ? Check the logs\n");
 
