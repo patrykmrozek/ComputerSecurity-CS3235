@@ -171,6 +171,8 @@ int main(int argc, char* argv[]) {
                 printf("----------------------Day %d: User login and database update-----------------------\n", i + 1);
                 user_login(db, "Alice");
                 user_login(db, "Bob");
+                //print_user(mallory);
+                //print_user(eve);
                 update_database_daily(db);
                 printf("\n");
             }

@@ -62,7 +62,6 @@ fn add_user(db: &mut UserDatabase, mut user: Box<UserStruct>) {
 
 //dont need to manually free
 //fn free_user(user: &mut UserStruct) {}
-
 fn print_database(db: &UserDatabase) {
     for user in &(*db).users {
         if let Some(_user) = user {
@@ -72,7 +71,7 @@ fn print_database(db: &UserDatabase) {
 }
 
 fn copy_string(dest: &mut [u8], src: &str, n: usize) {
-    //gets the minimum between src.len and n, so we dont go over the range
+    //gets the minimum between src.len and n
     let copy_len = src.len().min(n);
     for i in 0..copy_len {
         dest[i] = src.as_bytes()[i];
@@ -101,7 +100,7 @@ fn create_user(username: &str, email: &str, user_id: i32, password: &str) -> Box
     return Box::new(user); //Box is like a malloc pointer, with auto free, auto dereference...
 }
 
-fn find_user_by_id(db: &UserDatabase, user_id: i32) -> Option<Box<UserStruct>> {
+fn find_user_by_id(db: &UserDatabase, user_id: i32) -> Option<&Box<UserStruct>> {
     //db = &UserDatabase
     //*db = UserDatabase
     //(*db).users = [actual user array]
@@ -113,7 +112,7 @@ fn find_user_by_id(db: &UserDatabase, user_id: i32) -> Option<Box<UserStruct>> {
             if (*_user).user_id == user_id {
                 //Some((Box<UserStruct>).clone())
                 //creates new Box<UserStruct> with copy of UserStruct
-                return Some((*_user).clone());
+                return Some(&(*_user));
             }
         }
     }
@@ -135,8 +134,8 @@ fn update_database_daily(db: &mut UserDatabase) {
             //println!("USER IN UPDATEDB:");
             //print_user(_user);
             if _user.inactivity_count > INACTIVITY_THRESHOLD {
-                println!("INNACTIVE USER: ");
-                print_user(_user);
+                //println!("INNACTIVE USER: ");
+                //print_user(_user);
                 (*db).users[i] = None;
                 users_removed += 1;
             } else {
@@ -186,9 +185,9 @@ fn get_password(db: &UserDatabase, username: &str) -> Option<String> {
 fn update_password(db: &mut UserDatabase, username: &str, password: &str) {
     let mut user: Option<&mut Box<UserStruct>> = find_user_by_username_mut(db, username);
     if let Some(ref mut _user) = user {
-        println!("OLD PASSWORD: {:?}", u8_to_string_no_nullt(&_user.password));
+        //println!("OLD PASSWORD: {:?}", u8_to_string_no_nullt(&_user.password));
         copy_string(&mut _user.password, password, password.len());
-        println!("NEW PASSWORD: {:?}", u8_to_string_no_nullt(&_user.password));
+        //println!("NEW PASSWORD: {:?}", u8_to_string_no_nullt(&_user.password));
     }
 }
 
