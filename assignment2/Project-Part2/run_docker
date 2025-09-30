@@ -1,0 +1,185 @@
+#!/bin/bash
+
+# Script to run C files or Rust projects in Docker container
+# Usage: 
+#   C files:    ./run_docker [--rebuild] [--debug] <C-file> -- <args>
+#   Rust:       ./run_docker [--rebuild] [--debug] [-gen <days>] --rust <project-dir> --bin <binary-name> -- <args>
+# Examples:
+#   ./run_docker database.c -- payload1
+#   ./run_docker --debug database.c -- payload1
+#   ./run_docker --rust ./my-project --bin my-binary -- arg1 arg2
+#   ./run_docker -gen 30 --rust ./database-rust --bin mixed_code_database
+#   ./run_docker --debug --rust ./my-project --bin my-binary -- arg1 arg2
+
+rebuild=false
+rust_mode=false
+project_dir=""
+binary_name=""
+cleanup_req=false
+debug_mode=false
+gen_days=""
+# Parse flags
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --rebuild)
+            rebuild=true
+            shift
+            ;;
+        --cleanup)
+            cleanup_req=true
+            shift
+            ;;
+        --debug)
+            debug_mode=true
+            shift
+            ;;
+        --rust)
+            rust_mode=true
+            shift
+            ;;
+        --bin)
+            binary_name="$2"
+            shift 2
+            ;;
+        -gen|--gen)
+            gen_days="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            if [ "$rust_mode" = true ] && [ -z "$project_dir" ]; then
+                project_dir="$1"
+            elif [ "$rust_mode" = false ]; then
+                c_file="$1"
+            else
+                echo "Unexpected argument: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+
+prog_args=("$@")
+
+if [ "$rust_mode" = false ] && [ -z "$c_file" ]; then
+    echo "Usage: ./run_docker [--rebuild, --cleanup, --debug, -gen <days>] <C-file> -- <args>"
+    echo "       ./run_docker [--rebuild, --cleanup, --debug, -gen <days>] --rust <project-dir> --bin <binary-name> -- <args>"
+    echo "Options:"
+    echo "  --rebuild    Force rebuild of Docker image"
+    echo "  --rust       Run Rust project instead of C file"
+    echo "  --bin        Specify binary name for Rust project"
+    echo "  --cleanup    Clean up Docker resources after execution"
+    echo "  --debug      Enable debug mode with sanitizers"
+    echo "  -gen <days>  Generate test data for specified number of days"
+    exit 1
+fi
+
+if [ "$rust_mode" = true ] && ([ -z "$project_dir" ] || [ -z "$binary_name" ]); then
+    echo "Error: For Rust mode, both project directory and binary name are required"
+    echo "Usage: ./run_docker --rust <project-dir> --bin <binary-name> -- <args>"
+    exit 1
+fi
+
+
+if [ "$rust_mode" = true ]; then
+
+    if [ ! -d "$project_dir" ]; then
+        echo "Error: Rust project directory '$project_dir' not found"
+        exit 1
+    fi
+    
+    if [ ! -f "$project_dir/Cargo.toml" ]; then
+        echo "Error: No Cargo.toml found in '$project_dir'. Not a valid Rust project."
+        exit 1
+    fi
+    
+    # Handle test data generation if requested
+    if [ -n "$gen_days" ]; then
+        echo "Generating test data for $gen_days days..."
+        if [ -f "$project_dir/generate_test_db.py" ]; then
+            cd "$project_dir"
+            python3 generate_test_db.py "$gen_days"
+            if [ $? -eq 0 ]; then
+                echo "Successfully generated test data for $gen_days days"
+            else
+                echo "Error: Failed to generate test data"
+                exit 1
+            fi
+            cd - >/dev/null
+        else
+            echo "Warning: generate_test_db.py not found in $project_dir, skipping data generation"
+        fi
+    fi
+    
+    work_dir=$(dirname "$(realpath "$project_dir")")
+    project_name=$(basename "$(realpath "$project_dir")")
+    echo "Rust mode: Project '$project_name', Binary '$binary_name'"
+else
+    if [ ! -f "$c_file" ]; then
+        echo "Error: C file '$c_file' not found"
+        exit 1
+    fi
+    
+    work_dir=$(dirname "$(realpath "$c_file")")
+    c_filename=$(basename "$c_file")
+    echo "C mode: File '$c_file'"
+fi
+
+
+if [ "$rebuild" = true ] || ! docker image inspect code-runner >/dev/null 2>&1; then
+    if [ "$rebuild" = true ]; then
+        echo "Rebuilding Docker image 'code-runner'..."
+        docker rmi code-runner >/dev/null 2>&1
+    else
+        echo "Docker image 'code-runner' not found. Building..."
+    fi
+    
+    docker build -t code-runner .
+    
+    if [ $? -ne 0 ]; then
+        echo "Docker build failed."
+        exit 1
+    fi
+    echo "Docker image built successfully."
+else
+    echo "Using existing Docker image 'code-runner'."
+fi
+
+
+if [ "$cleanup_req" = true ]; then
+    # Function to cleanup Docker resources
+    cleanup() {
+        echo ""
+        echo "Cleaning up Docker resources..."
+        docker container prune -f --filter "ancestor=code-runner" >/dev/null 2>&1
+        bash ./cleanup_docker
+    }
+    
+    # Set trap to cleanup on exit
+    trap cleanup EXIT INT TERM
+fi
+
+
+if [ "$rust_mode" = true ]; then
+    echo "Running Rust project $project_name (binary: $binary_name) in Docker container..."
+    docker run --rm -t \
+        -v "$work_dir:/workspace" \
+        -w "/workspace/$project_name" \
+        code-runner \
+        rust_run "." "$binary_name" "$debug_mode" "${prog_args[@]}"
+else
+    echo "Running C file $c_file in Docker container..."
+    docker run --rm -t \
+        -v "$work_dir:/workspace" \
+        code-runner \
+        compile_run "$c_filename" "$debug_mode" "${prog_args[@]}"
+fi

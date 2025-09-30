@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Script to clean up Docker resources created by run_docker
+# Usage: ./cleanup_docker
+
+docker container prune -f --filter "ancestor=code-runner" >/dev/null 2>&1
+
+if docker image inspect code-runner >/dev/null 2>&1; then
+    docker rmi code-runner
+    echo "Docker image 'code-runner' removed successfully."
+else
+    echo "Docker image 'code-runner' not found."
+fi
+
+docker image prune -f
+
+echo "Cleanup completed."
